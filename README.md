@@ -1,4 +1,5 @@
-# Obsidian Word Lookup Plugin
+# Lookup the Defination of word in Obsidian Plugin
+
 A lightweight plugin for Obsidian that provides **pure English-English definitions** for selected words with a simple double-click popup. No extra bloat, no Chinese translation, just clean dictionary references.
 
 ---
