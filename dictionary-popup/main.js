@@ -4,17 +4,17 @@ class DictionaryPlugin extends obsidian.Plugin {
   async onload() {
     console.log('Loading Dictionary Popup Plugin');
 
-    // add styles
+    // Add custom styles
     this.addStyle();
 
-    // click time
+    // Double click timer variables
     this.lastClickTime = 0;
     this.clickCount = 0;
 
-    // click event
+    // Register double click event
     this.registerDomEvent(document, 'mousedown', this.handleDoubleClick.bind(this));
 
-    // add command
+    // Register command
     this.addCommand({
       id: 'lookup-word',
       name: 'Lookup selected word',
@@ -130,13 +130,13 @@ class DictionaryPlugin extends obsidian.Plugin {
   }
 
   handleDoubleClick(event) {
-    // Only double click
+    // Only respond to left mouse button double click
     if (event.button !== 0) return;
 
     const currentTime = new Date().getTime();
     const timeDiff = currentTime - this.lastClickTime;
 
-    // click time <300ms
+    // Consider it a double click if within 300ms
     if (timeDiff < 300) {
       this.clickCount++;
       if (this.clickCount >= 2) {
@@ -151,64 +151,78 @@ class DictionaryPlugin extends obsidian.Plugin {
   }
 
   async handleWordLookup(event) {
-    // confirm target is text
-    if (event.target.nodeType === Node.TEXT_NODE ||
-      event.target.matches('.cm-line, .cm-content, .markdown-preview-view, .cm-hmd-embed, .markdown-preview-section')) {
+    // Fix 1: Remove strict element restrictions, support all text elements
+    // Exclude non-text interactive elements (buttons, inputs, modals), support all other text
+    const isExcluded = event.target.closest('button, input, textarea, select, .modal, .menu');
+    if (isExcluded) return;
 
-      const selection = window.getSelection();
-      if (selection.toString().trim() && selection.anchorOffset !== selection.focusOffset) {
-        // select word
-        const selectedWord = selection.toString().trim();
-        if (this.isValidWord(selectedWord)) {
-          event.preventDefault();
-          event.stopPropagation();
-          this.showDictionaryPopup(selectedWord);
-        }
-      } else {
-        // get word at position
-        const word = this.getWordAtPosition(event);
-        if (word && this.isValidWord(word)) {
-          event.preventDefault();
-          event.stopPropagation();
-          this.showDictionaryPopup(word);
-        }
-      }
+    const selection = window.getSelection();
+    const selectedText = selection.toString().trim();
+
+    if (selectedText && this.isValidWord(selectedText)) {
+      // Handle manually selected text
+      event.preventDefault();
+      event.stopPropagation();
+      this.showDictionaryPopup(selectedText, event);
+      return;
+    }
+
+    // Fix 2: Use native API to get word at click position
+    const word = this.getWordAtPosition(event);
+    if (word && this.isValidWord(word)) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.showDictionaryPopup(word, event);
     }
   }
 
+  // Core Fix: Rewrite word extraction function for all formatted text
   getWordAtPosition(event) {
-    let target = event.target;
-    let text = '';
+    try {
+      // Native browser API: Get text node and position at mouse click
+      const x = event.clientX;
+      const y = event.clientY;
+      const caret = document.caretPositionFromPoint(x, y);
+      if (!caret || !caret.offsetNode) return null;
 
-    // get words
-    if (target.nodeType === Node.TEXT_NODE) {
-      text = target.textContent;
-    } else {
-      text = target.textContent || '';
+      const textNode = caret.offsetNode;
+      const offset = caret.offset;
+      const text = textNode.textContent;
+
+      // Define word characters: letters, hyphens, apostrophes
+      const wordChar = /[a-zA-Z'-]/;
+
+      // Find word start to the left
+      let start = offset;
+      while (start > 0 && wordChar.test(text[start - 1])) {
+        start--;
+      }
+
+      // Find word end to the right
+      let end = offset;
+      while (end < text.length && wordChar.test(text[end])) {
+        end++;
+      }
+
+      // Extract the word
+      const word = text.substring(start, end).trim();
+      return word;
+    } catch (e) {
+      return null;
     }
-
-    
-    const offset = event.clientX - target.getBoundingClientRect().left;
-    const charIndex = Math.floor((offset / target.offsetWidth) * text.length);
-
-    
-    const leftBound = text.lastIndexOf(' ', charIndex) + 1;
-    const rightBound = text.indexOf(' ', charIndex);
-    const word = text.substring(leftBound, rightBound === -1 ? text.length : rightBound).trim();
-
-    return word.replace(/[^\w'-]/g, ''); 
   }
 
   isValidWord(word) {
-    
+    // Simple validation for valid English word
     return word && word.length > 1 && /^[a-zA-Z'-]+$/.test(word) && word.length < 30;
   }
 
-  async showDictionaryPopup(word) {
-    // remove existing popup
+  // Fix 3: Add event parameter to fix popup positioning
+  async showDictionaryPopup(word, event = null) {
+    // Remove existing popup if present
     this.removeExistingPopup();
 
-    // create popup
+    // Create popup element
     const popup = document.createElement('div');
     popup.className = 'dictionary-popup-modal';
     popup.innerHTML = `
@@ -217,40 +231,46 @@ class DictionaryPlugin extends obsidian.Plugin {
           </div>
         `;
 
-    // position
-    this.positionPopup(popup, event);
+    // Position popup: mouse position if event exists, center otherwise
+    if (event) {
+      this.positionPopup(popup, event);
+    } else {
+      popup.style.left = '50%';
+      popup.style.top = '50%';
+      popup.style.transform = 'translate(-50%, -50%)';
+    }
 
     document.body.appendChild(popup);
 
     try {
-      // fetch Dictionary Data
+      // Fetch dictionary data
       const dictionaryData = await this.fetchDictionaryData(word);
       this.updatePopupContent(popup, word, dictionaryData);
     } catch (error) {
       console.error('Dictionary lookup failed:', error);
       popup.innerHTML = `
             <div class="dictionary-error">
-              error: ${error.message}
+              Not searching: ${error.message}
             </div>
           `;
     }
   }
 
   async fetchDictionaryData(word) {
-    // API
+    // Use free dictionary API
     const response = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`);
 
     if (!response.ok) {
-      throw new Error('cannot find words');
+      throw new Error('cannot find result');
     }
 
     const data = await response.json();
-    return data[0]; // return data
+    return data[0]; // Return the first result
   }
 
   updatePopupContent(popup, word, data) {
     if (!data) {
-      popup.innerHTML = `<div class="dictionary-error">cannot find word "${word}"</div>`;
+      popup.innerHTML = `<div class="dictionary-error">cannot find result "${word}"</div>`;
       return;
     }
 
@@ -261,12 +281,12 @@ class DictionaryPlugin extends obsidian.Plugin {
           </div>
         `;
 
-    
+    // Phonetic transcription
     if (data.phonetic) {
       content += `<div class="dictionary-pronunciation">/${data.phonetic}/</div>`;
     }
 
-    // definition
+    // Definitions
     content += `<div class="dictionary-popup-content">`;
     if (data.meanings && data.meanings.length > 0) {
       data.meanings.slice(0, 3).forEach((meaning, index) => {
@@ -281,28 +301,30 @@ class DictionaryPlugin extends obsidian.Plugin {
     content += `</div>`;
 
     content += `
-            <div class="dictionary-source">
-              source: <a href="https://en.wiktionary.org/wiki/${word}" target="_blank">Wiktionary</a>
-            </div>
+            
         `;
 
     popup.innerHTML = content;
 
-    // close
+    // Close popup when clicking outside
     setTimeout(() => {
       document.addEventListener('click', this.closePopupOnClickOutside.bind(this), { once: true });
     }, 100);
   }
 
   positionPopup(popup, event) {
-    const rect = popup.getBoundingClientRect();
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
 
     let left = event.clientX;
     let top = event.clientY + 10;
 
-    
+    // Append to body to get actual dimensions
+    document.body.appendChild(popup);
+    const rect = popup.getBoundingClientRect();
+    document.body.removeChild(popup);
+
+    // Ensure popup stays within viewport bounds
     if (left + rect.width > viewportWidth) {
       left = viewportWidth - rect.width - 10;
     }
