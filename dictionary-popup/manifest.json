@@ -3,7 +3,7 @@
     "name": "Dictionary Popup",
     "version": "1.0.0",
     "description": "Double click and popup the defination of words",
-    "author": "keniskey",
+    "author": "veritasian",
     "isDesktopOnly": false,
     "minAppVersion": "0.12.0"
 }
